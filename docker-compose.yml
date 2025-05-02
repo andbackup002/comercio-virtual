@@ -1,0 +1,336 @@
+version: '3.8'
+
+services:
+  # Bancos de Dados MongoDB independentes
+  mongodb-auth:
+    image: mongo:5.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_auth_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=auth
+    networks:
+      - backend
+    command: mongod --port 27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongodb-products:
+    image: mongo:5.0
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongodb_products_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=products
+    networks:
+      - backend
+    command: mongod --port 27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongodb-orders:
+    image: mongo:5.0
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongodb_orders_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=orders
+    networks:
+      - backend
+    command: mongod --port 27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongodb-payments:
+    image: mongo:5.0
+    ports:
+      - "27020:27017"
+    volumes:
+      - mongodb_payments_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=payments
+    networks:
+      - backend
+    command: mongod --port 27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  mongodb-inventory:
+    image: mongo:5.0
+    ports:
+      - "27021:27017"
+    volumes:
+      - mongodb_inventory_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=inventory
+    networks:
+      - backend
+    command: mongod --port 27017
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Serviços de Banco de Dados
+  redis-api-gateway:
+    image: redis:6.2-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_api_gateway_data:/data
+    networks:
+      - backend
+
+  redis-cart:
+    image: redis:6.2-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_cart_data:/data
+    networks:
+      - backend
+
+  redis-catalog:
+    image: redis:6.2-alpine
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_catalog_data:/data
+    networks:
+      - backend
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_INIT_LIMIT: 5
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092,INTERNAL://kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,INTERNAL://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.37.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:9.0.0
+    ports:
+      - "3001:3000"  # Alterado de 3000:3000 para evitar conflito com api-gateway
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+
+  # Serviços da Aplicação
+  api-gateway:
+    build: 
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"  # Mantido como está por ser o serviço principal
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - REDIS_URL=redis://redis-api-gateway:6379
+    depends_on:
+      - redis-api-gateway
+      - auth-service
+      - cart-service
+      - product-catalog
+      - order-service
+      - payment-service
+      - inventory-service
+    networks:
+      - backend
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - MONGODB_URI=mongodb://mongodb-auth:27017/auth
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb-auth
+      - kafka
+    networks:
+      - backend
+
+  cart-service:
+    build:
+      context: ./services/cart-service
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - REDIS_URL=redis://redis-cart:6379
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - redis-cart
+      - kafka
+    networks:
+      - backend
+
+  product-catalog:
+    build:
+      context: ./services/product-catalog
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+      - "9100:9100"  # Mantido como está por ser o primeiro serviço
+    environment:
+      - PORT=50051
+      - METRICS_PORT=9100
+      - MONGODB_URI=mongodb://mongodb-products:27017/products
+      - REDIS_ADDR=redis-catalog:6379
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb-products
+      - redis-catalog
+      - kafka
+    networks:
+      - backend
+
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    environment:
+      - PORT=50052
+      - MONGODB_URI=mongodb://mongodb-orders:27017/orders
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb-orders
+      - kafka
+    networks:
+      - backend
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    environment:
+      - PORT=50053
+      - MONGODB_URI=mongodb://mongodb-payments:27017/payments
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb-payments
+      - kafka
+    networks:
+      - backend
+
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+      dockerfile: Dockerfile
+    ports:
+      - "50054:50054"
+      - "9102:9100"  # Alterado de 9101:9100 para evitar conflito de métricas
+    environment:
+      - PORT=50054
+      - METRICS_PORT=9102  # Atualizado para corresponder à nova porta
+      - MONGODB_URI=mongodb://mongodb-inventory:27017/inventory
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - mongodb-inventory
+      - kafka
+    networks:
+      - backend
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    environment:
+      - NODE_ENV=development
+      - PORT=3003
+      - KAFKA_BROKERS=kafka:29092
+    depends_on:
+      - kafka
+    networks:
+      - backend
+
+volumes:
+  mongodb_auth_data:
+  mongodb_products_data:
+  mongodb_orders_data:
+  mongodb_payments_data:
+  mongodb_inventory_data:
+  redis_api_gateway_data:
+  redis_cart_data:
+  redis_catalog_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  backend:
+    driver: bridge
