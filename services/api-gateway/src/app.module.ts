@@ -2,15 +2,10 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { RedisStore } from 'cache-manager-redis-store';
-import { AuthModule } from './modules/auth/auth.module';
-import { ProductsModule } from './modules/products/products.module';
-import { CartModule } from './modules/cart/cart.module';
-import { OrdersModule } from './modules/orders/orders.module';
-import { PaymentsModule } from './modules/payments/payments.module';
-import { NotificationsModule } from './modules/notifications/notifications.module';
 import { RateLimitMiddleware } from './middlewares/rate-limit.middleware';
 import { CacheService } from './services/cache.service';
+import { AuthModule } from './modules/auth/auth.module';
+import { RedisClientOptions } from 'redis';
 
 /**
  * Módulo principal do API Gateway
@@ -24,22 +19,14 @@ import { CacheService } from './services/cache.service';
     }),
 
     // Cache Redis global
-    CacheModule.registerAsync({
+    CacheModule.register<RedisClientOptions>({
       isGlobal: true,
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
-        const store = await RedisStore.create({
-          socket: {
-            host: configService.get('REDIS_HOST', 'localhost'),
-            port: configService.get('REDIS_PORT', 6379),
-          },
-          ttl: 3600,
-        });
-        return {
-          store: () => store,
-        };
+      store: 'redis',
+      socket: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: Number(process.env.REDIS_PORT) || 6379,
       },
-      inject: [ConfigService],
+      ttl: 3600,
     }),
 
     // Rate limiting global
@@ -47,18 +34,22 @@ import { CacheService } from './services/cache.service';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: async (config: ConfigService) => ({
-        ttl: config.get('THROTTLE_TTL', 60),
-        limit: config.get('THROTTLE_LIMIT', 100),
+        throttlers: [{
+          ttl: config.get('THROTTLE_TTL', 60),
+          limit: config.get('THROTTLE_LIMIT', 100),
+        }],
       }),
     }),
 
-    // Módulos da aplicação
+    // Apenas módulo de autenticação ativo
     AuthModule,
+    /* Módulos temporariamente desabilitados
     ProductsModule,
     CartModule,
     OrdersModule,
     PaymentsModule,
     NotificationsModule,
+    */
   ],
   providers: [CacheService],
   exports: [CacheService],
